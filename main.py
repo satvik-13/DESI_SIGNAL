@@ -1,74 +1,90 @@
 import os
 import base64
-from fastapi import FastAPI, Header, HTTPException
+import shutil
+from typing import Optional
+from fastapi import FastAPI, File, UploadFile, Header, HTTPException, Form, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from fastapi.middleware.cors import CORSMiddleware
+from detector import analyze_voice
 
-# This imports the AI logic from your detector.py file
-from detector import analyze_voice 
-
-# 1. Initialization
+# 1. Initialize App & Environment
 load_dotenv()
 app = FastAPI()
 
-# 2. CORS Policy (Essential for the judges' tester)
+# 2. CORS & Middleware (Crucial for browser/portal testing)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 3. Request Model (As per Problem Statement)
-class VoiceRequest(BaseModel):
-    language: str
-    audioFormat: str
-    audioBase64: str
+@app.middleware("http")
+async def add_ngrok_skip_header(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["ngrok-skip-browser-warning"] = "true"
+    return response
 
-# Fixed Security Key
+# 3. Models
+class VoiceRequest(BaseModel):
+    audioBase64: Optional[str] = None
+    language: str = "english"
+
 SECRET_API_KEY = "sk_desi_9988776655"
 
+# 4. The Unified Endpoint
 @app.post("/api/voice-detection")
-async def detect_voice(request: VoiceRequest, x_api_key: str = Header(None)):
-    # Log the incoming request so you can watch it live
-    print(f"--- Incoming Evaluation Request | Language: {request.language} ---")
-    # 4. Security Check
+async def detect_voice(
+    request_data: Optional[VoiceRequest] = None,
+    file: Optional[UploadFile] = File(None),
+    language: Optional[str] = Form(None),
+    x_api_key: str = Header(None)
+):
+    # Security Validation
     if x_api_key != SECRET_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
+    temp_path = "temp_eval_audio.mp3"
+    selected_lang = "english"
+
     try:
-        # 5. Decode Base64 and save as temporary file
-        audio_binary = base64.b64decode(request.audioBase64)
-        file_path = f"eval_{request.language}_{os.urandom(4).hex()}.mp3" # Unique filename for multi-request handling
+        # PATH A: Direct File Upload (Postman/cURL -F)
+        if file:
+            selected_lang = language if language else "english"
+            with open(temp_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+        # PATH B: Base64 JSON (Automated Evaluation/Portal)
+        elif request_data and request_data.audioBase64:
+            selected_lang = request_data.language
+            audio_data = base64.b64decode(request_data.audioBase64)
+            with open(temp_path, "wb") as f:
+                f.write(audio_data)
         
-        with open(file_path, "wb") as f:
-            f.write(audio_binary)
+        else:
+            return {"status": "error", "message": "No audio data provided (Expected File or Base64)"}
 
-        # 6. Process voice using the 'detector.py' logic
-        # It returns: classification (str), confidence (float), explanation (str)
-        classification, confidence, explanation = analyze_voice(file_path, request.language)
+        # Run Analysis
+        prediction, confidence, explanation = analyze_voice(temp_path, selected_lang)
+        
+        # Cleanup
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
-        # 7. Final Response (Level 2 Required Format)
         return {
             "status": "success",
-            "classification": classification,
+            "classification": prediction,
             "confidenceScore": confidence,
             "explanation": explanation
         }
 
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Server processing error: {str(e)}"
-        }
-    finally:
-        # Cleanup temp file to keep your desktop clean
-        if os.path.exists("temp_eval_audio.mp3"):
-            os.remove("temp_eval_audio.mp3")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return {"status": "error", "message": f"Processing failed: {str(e)}"}
 
 if __name__ == "__main__":
     import uvicorn
-    # This matches the port 8000 you used in the ngrok command
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
