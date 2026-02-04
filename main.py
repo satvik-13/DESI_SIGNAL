@@ -1,88 +1,89 @@
 import os
 import base64
 import shutil
-from typing import Optional
-from fastapi import FastAPI, File, UploadFile, Header, HTTPException, Form, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Header, HTTPException, Request, File, UploadFile, Form
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from detector import analyze_voice
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 
-# 1. Initialize App & Environment
+# This imports the AI logic from your detector.py file
+from detector import analyze_voice 
+
+# 1. Initialization
 load_dotenv()
 app = FastAPI()
 
-# 2. CORS & Middleware (Crucial for browser/portal testing)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# 2. Ngrok Warning Bypass Middleware
 @app.middleware("http")
-async def add_ngrok_skip_header(request: Request, call_next):
+async def add_ngrok_header(request: Request, call_next):
     response = await call_next(request)
     response.headers["ngrok-skip-browser-warning"] = "true"
     return response
 
-# 3. Models
-class VoiceRequest(BaseModel):
-    audioBase64: Optional[str] = None
-    language: str = "english"
+# 3. CORS Policy
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+# Fixed Security Key
 SECRET_API_KEY = "sk_desi_9988776655"
 
-# 4. The Unified Endpoint
 @app.post("/api/voice-detection")
 async def detect_voice(
-    request_data: Optional[VoiceRequest] = None,
-    file: Optional[UploadFile] = File(None),
-    language: Optional[str] = Form(None),
+    request: Request, # Added this to handle manual JSON parsing
+    file: Optional[UploadFile] = File(None), 
+    language: str = Form("english"),
     x_api_key: str = Header(None)
 ):
-    # Security Validation
+    # 4. Security Check
     if x_api_key != SECRET_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    temp_path = "temp_eval_audio.mp3"
-    selected_lang = "english"
-
+    temp_path = ""
     try:
-        # PATH A: Direct File Upload (Postman/cURL -F)
+        # 5. Unified Input Handling
         if file:
-            selected_lang = language if language else "english"
-            with open(temp_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-
-        # PATH B: Base64 JSON (Automated Evaluation/Portal)
-        elif request_data and request_data.audioBase64:
-            selected_lang = request_data.language
-            audio_data = base64.b64decode(request_data.audioBase64)
-            with open(temp_path, "wb") as f:
-                f.write(audio_data)
-        
+            # Case A: File upload (Swagger/Postman)
+            audio_binary = await file.read()
+            target_lang = language
         else:
-            return {"status": "error", "message": "No audio data provided (Expected File or Base64)"}
+            # Case B: JSON/Base64 handling (Automated systems)
+            try:
+                body = await request.json()
+                if "audioBase64" in body:
+                    audio_binary = base64.b64decode(body["audioBase64"])
+                    target_lang = body.get("language", "english")
+                else:
+                    return {"status": "error", "message": "No audio data provided"}
+            except:
+                return {"status": "error", "message": "Invalid request format"}
 
-        # Run Analysis
-        prediction, confidence, explanation = analyze_voice(temp_path, selected_lang)
-        
-        # Cleanup
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        # 6. Save temporary file
+        temp_path = f"eval_{os.urandom(4).hex()}.mp3"
+        with open(temp_path, "wb") as f:
+            f.write(audio_binary)
 
+        # 7. Process voice using your 'detector.py' logic
+        classification, confidence, explanation = analyze_voice(temp_path, target_lang)
+
+        # 8. Return Response
         return {
             "status": "success",
-            "classification": prediction,
-            "confidenceScore": confidence,
+            "classification": classification,
+            "confidenceScore": float(confidence),
             "explanation": explanation
         }
 
     except Exception as e:
-        if os.path.exists(temp_path):
+        return {"status": "error", "message": f"Server processing error: {str(e)}"}
+    finally:
+        if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
-        return {"status": "error", "message": f"Processing failed: {str(e)}"}
 
 if __name__ == "__main__":
     import uvicorn
