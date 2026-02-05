@@ -35,9 +35,9 @@ SECRET_API_KEY = "sk_desi_9988776655"
 
 @app.post("/api/voice-detection")
 async def detect_voice(
-    request: Request, # Added this to handle manual JSON parsing
+    request: Request, 
     file: Optional[UploadFile] = File(None), 
-    language: str = Form("english"),
+    language: Optional[str] = Form(None),
     x_api_key: str = Header(None)
 ):
     # 4. Security Check
@@ -47,12 +47,13 @@ async def detect_voice(
     temp_path = ""
     try:
         # 5. Unified Input Handling
+        # Path A: Multipart File Upload (Commonly used by manual testing)
         if file:
-            # Case A: File upload (Swagger/Postman)
             audio_binary = await file.read()
-            target_lang = language
+            target_lang = language if language else "english"
+        
+        # Path B: JSON Body (Commonly used by automated evaluation systems)
         else:
-            # Case B: JSON/Base64 handling (Automated systems)
             try:
                 body = await request.json()
                 if "audioBase64" in body:
@@ -60,10 +61,10 @@ async def detect_voice(
                     target_lang = body.get("language", "english")
                 else:
                     return {"status": "error", "message": "No audio data provided"}
-            except:
+            except Exception:
                 return {"status": "error", "message": "Invalid request format"}
 
-        # 6. Save temporary file
+        # 6. Save temporary file with a unique name to avoid conflicts
         temp_path = f"eval_{os.urandom(4).hex()}.mp3"
         with open(temp_path, "wb") as f:
             f.write(audio_binary)
@@ -71,7 +72,7 @@ async def detect_voice(
         # 7. Process voice using your 'detector.py' logic
         classification, confidence, explanation = analyze_voice(temp_path, target_lang)
 
-        # 8. Return Response
+        # 8. Return Response in official Level 2 format
         return {
             "status": "success",
             "classification": classification,
@@ -82,10 +83,12 @@ async def detect_voice(
     except Exception as e:
         return {"status": "error", "message": f"Server processing error: {str(e)}"}
     finally:
+        # 9. Guaranteed Cleanup
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
 if __name__ == "__main__":
     import uvicorn
+    # Use environment PORT for Render compatibility
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
