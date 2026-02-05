@@ -15,16 +15,18 @@ def extract_features(file_path):
 def analyze_voice(file_path, user_selected_lang):
     try:
         # --- PHASE 1: NO-IMPORT LANGUAGE HANDLING ---
-        # We use the user's selection directly to avoid crashing RAM
+        # We use the user's selected lang directly. This is 100% RAM safe.
         actual_lang = user_selected_lang 
 
         # --- PHASE 2: VOICE CLASSIFICATION ---
+        # Your core Random Forest model
         voice_model = joblib.load("voice_detector_model.pkl")
         dna = extract_features(file_path).reshape(1, -1)
         
         prediction = voice_model.predict(dna)[0]
         confidence = max(voice_model.predict_proba(dna)[0])
         
+        # Cleanup
         del voice_model
         gc.collect()
 
