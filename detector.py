@@ -3,6 +3,18 @@ import numpy as np
 import gc
 import joblib
 
+_MODEL_CACHE = None
+
+def load_model():
+    """Load model once and keep in memory for all requests"""
+    global _MODEL_CACHE
+    if _MODEL_CACHE is None:
+        model_path = "voice_detector_model.pkl"
+        print(f"Loading model from {model_path}...", flush=True)
+        _MODEL_CACHE = joblib.load(model_path)
+        print("✅ Model loaded successfully and cached in memory", flush=True)
+    return _MODEL_CACHE
+
 def extract_features(file_path):
     import librosa
     # Loading 2s to keep RAM low
@@ -20,15 +32,15 @@ def analyze_voice(file_path, user_selected_lang):
 
         # --- PHASE 2: VOICE CLASSIFICATION ---
         # Your core Random Forest model
-        voice_model = joblib.load("voice_detector_model.pkl")
+        voice_model = load_model()
         dna = extract_features(file_path).reshape(1, -1)
         
         prediction = voice_model.predict(dna)[0]
         confidence = max(voice_model.predict_proba(dna)[0])
         
         # Cleanup
-        del voice_model
-        gc.collect()
+        #del voice_model
+        #gc.collect()
 
         # --- PHASE 3: RESPONSE ---
         explanation = f"Vocal patterns analyzed for {actual_lang} phonetics. "
@@ -40,5 +52,5 @@ def analyze_voice(file_path, user_selected_lang):
         return prediction, round(float(confidence), 2), explanation
 
     except Exception as e:
-        gc.collect()
+        #gc.collect()
         return "HUMAN", 0.50, f"Analysis Error: {str(e)}"
