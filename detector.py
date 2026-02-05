@@ -5,7 +5,7 @@ import joblib
 
 def extract_features(file_path):
     import librosa
-    # Load only 2 seconds to save RAM
+    # Loading only 2 seconds to keep RAM low
     y, sr = librosa.load(file_path, sr=None, duration=2)
     mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     feature_vector = np.mean(mfccs.T, axis=0)
@@ -13,24 +13,23 @@ def extract_features(file_path):
     return feature_vector
 
 def analyze_voice(file_path, user_selected_lang):
-    # This library is tiny and won't crash your RAM
+    # This library is tiny (<1MB) compared to Whisper (~150MB)
     from langdetect import detect 
     
     try:
-        # --- PHASE 1: LITE LANGUAGE DETECTION ---
-        # Instead of Whisper, we'll use the user's selected lang as a fallback
-        # and assume the audio matches if it's within your 5 languages
+        # --- PHASE 1: LITE LANGUAGE HANDLING ---
+        # We trust the user's selection to save RAM for the classification
         actual_lang = user_selected_lang 
 
         # --- PHASE 2: VOICE CLASSIFICATION (The Core AI) ---
-        # Now we have plenty of RAM for your voice model
+        # Now there is plenty of room for your Random Forest model
         voice_model = joblib.load("voice_detector_model.pkl")
         dna = extract_features(file_path).reshape(1, -1)
         
         prediction = voice_model.predict(dna)[0]
         confidence = max(voice_model.predict_proba(dna)[0])
         
-        # Cleanup
+        # Cleanup immediately
         del voice_model
         gc.collect()
 
